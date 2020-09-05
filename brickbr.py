@@ -7,6 +7,7 @@ import decimal
 from bs4 import BeautifulSoup
 from price_parser import Price
 import simplejson as json
+from jinja2 import Template
 
 import requests
 import requests_cache
@@ -75,7 +76,7 @@ def update_prices():
         json.dump(usd_map, f, indent='\t')
 
 
-def generate_csv(brl_fn, usd_fn):
+def generate_output(brl_fn, usd_fn):
     usd_map = {}
     brl_map = {}
     with open(brl_fn, 'r') as f:
@@ -83,22 +84,31 @@ def generate_csv(brl_fn, usd_fn):
     with open(usd_fn, 'r') as f:
         usd_map = json.load(f)
 
-    price_lst = []
+    csv_lst = []
+    json_lst = []
     for set, bsp in brl_map.items():
         bsp = SetPrice(**bsp)
         usp = usd_map.get(set, None)
         if usp:
             usp = SetPrice(**usp)
             ratio = (decimal.Decimal(bsp.price) / decimal.Decimal(usp.price)).quantize(decimal.Decimal('0.01'))
-            price_lst.append((set, usp.name, usp.price, bsp.price, ratio, bsp.url))
+            csv_lst.append((set, usp.name, usp.price, bsp.price, ratio, bsp.url))
+            json_lst.append(dict(name=usp.name, usd=usp.price, brl=bsp.price, ratio=ratio,
+                                 brl_url=bsp.url))
 
-    price_lst.sort(key=lambda x: x[4])
+    csv_lst.sort(key=lambda x: x[4])
+    json_lst.sort(key=lambda x: x['ratio'])
 
     with open('prices.csv', 'w') as f:
         w = csv.writer(f)
-        w.writerows(price_lst)
+        w.writerows(csv_lst)
+
+    with open('template.html', 'r') as f:
+        rendered = Template(f.read()).render(item_list=json_lst)
+        with open('index.html', 'w') as w:
+            w.write(rendered)
 
 
 if __name__ == "__main__":
     # update_prices()
-    generate_csv('brl.json', 'usd.json')
+    generate_output('brl.json', 'usd.json')
