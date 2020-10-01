@@ -14,7 +14,7 @@ import requests_cache
 
 requests_cache.install_cache()
 
-SetPrice = Point = namedtuple('SetPrice', ['set', 'price', 'name', 'date', 'url'])
+SetPrice = namedtuple('SetPrice', ['set', 'price', 'name', 'date', 'url'])
 
 
 def get_brickset_price(url, set_number):
@@ -32,51 +32,47 @@ def get_brickset_price(url, set_number):
         return SetPrice(set=str(set_number), price=usd, name=name, date=datetime.utcnow().isoformat(), url=url)
 
 
-def get_legobrasil_price(url):
-    html = requests.get(url).content
-    soup = BeautifulSoup(html, 'html.parser')
-    price_tag = soup.find(class_='skuBestPrice')
-    set_tag = soup.find(class_='productDescriptionShort')
-    name_tag = soup.find(class_='productName')
-    if set_tag is None or price_tag is None:
-        return None
-    price = Price.fromstring(price_tag.string.strip()).amount
-    name = str(name_tag.string.strip())
-    return SetPrice(set=str(set_tag.string), price=price, name=name, date=datetime.utcnow().isoformat(), url=url)
-
-
-def update_prices():
-    html = requests.get("https://www.legobrasil.com.br/sitemap/sitemap-products-1.xml").content
-    soup = BeautifulSoup(html, 'html.parser')
-    url_tag_lst = soup('url')
-
+def update_legobrasil_prices():
     usd_map = {}
     brl_map = {}
-
-    for url_tag in url_tag_lst:
-        try:
-            url = url_tag.loc.string.strip()
-            print(url)
-            brl_set_price = get_legobrasil_price(url)
-            print(brl_set_price)
-            if brl_set_price:
-                brl_map[brl_set_price.set] = brl_set_price
-                bs_url = f'https://brickset.com/sets/{brl_set_price.set}-1/'
-                usd_set_price = get_brickset_price(bs_url, brl_set_price.set)
-                if usd_set_price:
-                    usd_map[usd_set_price.set] = usd_set_price
-                    print(usd_set_price)
-        except KeyboardInterrupt:
+    idx = 1
+    while True:
+        # Not sure what the params mean...
+        html = requests.get('https://www.legobrasil.com.br/buscapagina?PS=48&sl=09c5c48d-84de-48ea-8bb2-01fe3dad1f9a&cc=48&sm=0&PageNumber={}'.format(idx))
+        soup = BeautifulSoup(html.text, 'html.parser')
+        article_lst = soup('article')
+        if not article_lst:
             break
-        except:
-            traceback.print_exc()
+
+        for article_tag in article_lst:
+            try:
+                h3 = article_tag.find('h3')
+                name = h3.contents[0].string
+                set = h3.find('span').text.split(': ')[1]
+                url = article_tag.find(itemprop='url')['href']
+                price_tag = article_tag.find(itemprop='lowPrice')
+                if price_tag:
+                    price = Price.fromstring(price_tag.string.strip()).amount
+                    brl_set_price = SetPrice(set=set, price=price, name=name, date=datetime.utcnow().isoformat(), url=url)
+                    print(brl_set_price)
+                    brl_map[brl_set_price.set] = brl_set_price
+                    bs_url = f'https://brickset.com/sets/{brl_set_price.set}-1/'
+                    usd_set_price = get_brickset_price(bs_url, brl_set_price.set)
+                    if usd_set_price:
+                        usd_map[usd_set_price.set] = usd_set_price
+                        print(usd_set_price)
+            except KeyboardInterrupt:
+                break
+            except:
+                traceback.print_exc()
+        idx += 1
     with open('brl.json', 'w') as f:
         json.dump(brl_map, f, indent='\t')
     with open('usd.json', 'w') as f:
         json.dump(usd_map, f, indent='\t')
 
 
-def generate_output(brl_fn, usd_fn):
+def generate_output(brl_fn, usd_fn, html_fn):
     usd_map = {}
     brl_map = {}
     with open(brl_fn, 'r') as f:
@@ -93,7 +89,7 @@ def generate_output(brl_fn, usd_fn):
             usp = SetPrice(**usp)
             ratio = (decimal.Decimal(bsp.price) / decimal.Decimal(usp.price)).quantize(decimal.Decimal('0.01'))
             csv_lst.append((set, usp.name, usp.price, bsp.price, ratio, bsp.url))
-            json_lst.append(dict(name=usp.name, usd=usp.price, brl=bsp.price, ratio=ratio,
+            json_lst.append(dict(name=set + ' ' + bsp.name, usd=usp.price, brl=bsp.price, ratio=ratio,
                                  brl_url=bsp.url))
 
     csv_lst.sort(key=lambda x: x[4])
@@ -105,10 +101,11 @@ def generate_output(brl_fn, usd_fn):
 
     with open('template.html', 'r') as f:
         rendered = Template(f.read()).render(item_list=json_lst)
-        with open('index.html', 'w') as w:
+        with open(html_fn, 'w') as w:
             w.write(rendered)
 
 
 if __name__ == "__main__":
     # update_prices()
-    generate_output('brl.json', 'usd.json')
+    # update_legobrasil_prices()
+    generate_output('brl.json', 'usd.json', 'docs/index.html')
